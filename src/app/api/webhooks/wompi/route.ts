@@ -62,4 +62,3 @@ export async function POST(request: Request) {
     console.error("Error crítico en webhook:", error);
     return NextResponse.json({ error: 'Error interno del servidor' }, { status: 500 });
   }
-}
