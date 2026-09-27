@@ -15,6 +15,13 @@ export async function POST(request: Request) {
     const { transaction } = event.data;
     const { signature, timestamp } = event;
 
+    // Guard de seguridad: Verificar que el secreto exista en el entorno (.env)
+    const eventsSecret = process.env.WOMPI_EVENTS_SECRET;
+    if (!eventsSecret) {
+      console.error("Fallo crítico: WOMPI_EVENTS_SECRET no está configurado.");
+      return NextResponse.json({ error: 'Error de configuración del servidor' }, { status: 500 });
+    }
+
     // 2. Reconstruir la firma criptográfica exigida por Wompi
     let stringToSign = '';
     signature.properties.forEach((prop: string) => {
@@ -25,25 +32,28 @@ export async function POST(request: Request) {
     });
     
     stringToSign += timestamp;
-    stringToSign += process.env.WOMPI_EVENTS_SECRET;
+    stringToSign += eventsSecret; // Usamos la variable validada
 
     const hash = crypto.createHash('sha256').update(stringToSign).digest('hex');
 
     // 3. Bloquear intentos de fraude
     if (hash !== signature.checksum) {
-      console.error("ALERTA DE SEGURIDAD: Firma inválida detectada.");
+      console.error(`ALERTA DE SEGURIDAD: Firma inválida para referencia ${transaction.reference}.`);
       return NextResponse.json({ error: 'Firma inválida' }, { status: 401 });
     }
 
-    // 4. Impactar la base de datos silenciosamente
+    // 4. Impactar la base de datos silenciosamente usando el cliente Admin
     console.log(`[Webhook] Actualizando pago: ${transaction.reference} -> ${transaction.status}`);
     
     const { error } = await supabaseAdmin
       .from('invoices')
-      .update({ status: transaction.status })
+      .update({ status: transaction.status }) // Ej: APPROVED, DECLINED
       .eq('reference_code', transaction.reference);
 
-    if (error) throw error;
+    if (error) {
+      console.error("Error al actualizar estado en Supabase:", error);
+      throw error;
+    }
 
     // 5. Acuse de recibo obligatorio para Wompi
     return NextResponse.json({ message: 'Webhook procesado exitosamente' }, { status: 200 });
