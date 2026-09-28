@@ -43,18 +43,27 @@ export async function POST(request: Request) {
     }
 
     // 4. Impactar la base de datos silenciosamente usando el cliente Admin
-    console.log(`[Webhook] Actualizando pago: ${transaction.reference} -> ${transaction.status}`);
+    console.log(`[Webhook] Intento de actualización: ${transaction.reference} -> ${transaction.status}`);
     
-    const { error } = await supabaseAdmin
+    const { data, error } = await supabaseAdmin
       .from('invoices')
       .update({ status: transaction.status }) // Ej: APPROVED, DECLINED
-      .eq('reference_code', transaction.reference);
+      .eq('reference_code', transaction.reference)
+      .select(); // <-- CRÍTICO: Obliga a Supabase a retornar la fila afectada
 
     if (error) {
       console.error("Error al actualizar estado en Supabase:", error);
       throw error;
     }
 
+    // Validación de QA estricta
+    if (!data || data.length === 0) {
+      console.error(`ALERTA: Supabase no arrojó error, pero actualizó 0 filas. Causas posibles: RLS bloqueando a supabaseAdmin o la referencia '${transaction.reference}' no coincide exactamente en BD.`);
+      // Retornamos 200 para que Wompi no reintente infinitamente, pero lo dejamos registrado en logs.
+      return NextResponse.json({ message: 'Webhook recibido, pero sin impacto en BD' }, { status: 200 });
+    }
+
+    console.log(`[Webhook] ¡Éxito! Fila actualizada en BD:`, data);
     // 5. Acuse de recibo obligatorio para Wompi
     return NextResponse.json({ message: 'Webhook procesado exitosamente' }, { status: 200 });
 
